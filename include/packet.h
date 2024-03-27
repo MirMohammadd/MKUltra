@@ -23,6 +23,7 @@ typedef struct{
     uint8_t sender_ip[IP_LENGTH];
     uint8_t target_mac[MACADDR_LEN];
     uint8_t target_ip[IP_LENGTH];
+    uint8_t protocol_len;
 }arp_packet_t;
 
 #endif // PACKET_H
