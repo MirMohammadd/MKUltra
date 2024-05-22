@@ -6,6 +6,11 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <net/if.h>
+#include <sys/ioctl.h>
+
+#include <sys/sockio.h>
+
+#include <hosts.h>
 
 int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip){
     struct in_addr target_ip_hdr;
@@ -17,7 +22,7 @@ int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip){
         raise(EXIT_FAILURE);
     }
 
-    int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
+    sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
 
     if (sock < 0){
         perror("socket");
@@ -41,9 +46,8 @@ int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip){
     arp_header.ar_hln = ETH_ALEN;                  // Hardware address length: 6 bytes
     arp_header.ar_pln = 4;                         // Protocol address length: 4 bytes
     arp_header.ar_op = htons(ARPOP_REQUEST);        // Operation code: ARP request
-    memcpy(arp_header.ar_sip, &(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr), 4); // Sender IP address
-    memset(arp_header.ar_tha, 0, ETH_ALEN);         // Target hardware address: 0
-    memcpy(arp_header.ar_tip, &target_ip, 4);       // Target IP address
+    memcpy(arp_header.ar_op, &(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr), 4); // Sender IP address
+    memcpy(arp_header.ar_op, &target_ip, 4);       // Target IP address
 
     // Construct packet
     char packet[BUF_SIZE];
@@ -65,3 +69,44 @@ int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip){
     close(sock);
     return 0;
 }
+
+void getAllInterfaces(){
+    int sock;
+    struct ifreq ifr;
+    struct arpreq arpreq;
+    struct sockaddr_in *sin;
+    struct ether_addr *eth;
+    char buffer[NORMAL_BUFFER_SIZE];
+    
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+    }
+
+    struct ifconf ifc;
+    // List devices
+    ifc.ifc_len = sizeof(buffer);
+    if (ioctl(sock, SIOCGIFCONF, &ifc) < 0) {
+        perror("ioctl");
+        close(sock);
+    }
+
+        sin = (struct sockaddr_in *)&ifr.ifr_addr;
+        printf("Interface: %s, \n IP Address: %s\n", ifr.ifr_name, inet_ntoa(sin->sin_addr));
+
+
+        // Get MAC address
+        if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0) {
+            perror("ioctl");
+            close(sock);
+        }
+        eth = (struct ether_addr *)ifr.ifr_name;
+        printf("Interface: %s, MAC Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+               ifr.ifr_name, eth->ether_addr_octet[0], eth->ether_addr_octet[1],
+               eth->ether_addr_octet[2], eth->ether_addr_octet[3],
+               eth->ether_addr_octet[4], eth->ether_addr_octet[5]);
+    close(sock);
+            
+    }
+
+

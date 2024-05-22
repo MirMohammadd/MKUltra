@@ -7,3 +7,5 @@
 *.json
 *test.txt
 *test
+*.o
+*mkultra

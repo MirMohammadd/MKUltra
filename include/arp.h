@@ -50,7 +50,7 @@ struct ethhdr {
 };
 
 // ARP header
-struct arphdr {
+struct arphdrs {
     unsigned short  ar_hrd;             // Hardware type
     unsigned short  ar_pro;             // Protocol type
     unsigned char   ar_hln;             // Hardware address length

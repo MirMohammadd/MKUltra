@@ -2,7 +2,7 @@ OBJS :=  $(patsubst %.c,%.o,$(wildcard src/*.c)) $(patsubst %.cpp,%.o,$(wildcard
 SOURCE := mkultra.c
 HEADER := 
 OUT := mkultra
-LFLAGS := -lpthread -I include
+LFLAGS := -lpthread -lpcap  -I include
 CXXFLAGS := -std=c++11 -Wall -I include
 
 CC := gcc
