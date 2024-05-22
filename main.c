@@ -31,8 +31,6 @@ struct sniff_ethernet {
         u_char  ether_shost[ETHER_ADDR_LEN];    /* source host address */
         u_short ether_type;                     /* IP? ARP? RARP? etc */
 };
-
-void writeLog(const char data);
  
 /* IP header */
 struct sniff_ip {
@@ -217,8 +215,6 @@ got_packet(u_char *args, const struct pcap_pkthdr *header, const u_char *packet)
  printf(" Destination Address:  ");
  do{
     printf("%s%x",(i == ETHER_ADDR_LEN) ? " " : ":",*ptr++);
-    writeLog("Destination address:");
-    writeLog((i == ETHER_ADDR_LEN) ? " " : ":");
  }while(--i>0);
  printf("\n");
 
@@ -398,14 +394,4 @@ int main(int argc, char **argv)
  printf("\nCapture complete.\n");
  
 return 0;
-}
-
-void writeLog(const char data){
-    FILE *fp = fopen("log.txt","w");
-    if (fp == NULL){
-        perror("Error openning the file!");
-        exit(1);
-    }
-
-    fprintf(fp,"%c",data);
 }
