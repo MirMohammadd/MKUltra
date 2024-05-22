@@ -3,6 +3,8 @@
 #include <signal.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <arpa/inet.h>
 
 static pthread_mutex_t DHCPMutex;
 
