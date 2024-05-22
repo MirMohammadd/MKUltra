@@ -27,4 +27,7 @@ struct dhcp_packet {
     uint8_t options[312]; // Options
 };
 
+void DHCPStarvation(char* broadcastAddr);
+
+
 #endif
