@@ -22,6 +22,26 @@
 
 #define BUF_SIZE 42 // Ethernet frame size for ARP request
 
+#ifndef ETH_P_ARP
+#define ETH_P_ARP 0x0806
+#endif
+
+#ifndef AF_PACKET
+#define AF_PACKET 17
+#endif
+
+#ifndef SIOCGIFHWADDR
+#define SIOCGIFHWADDR 0x8927
+#endif
+
+
+#ifndef ETH_P_IP
+#define ETH_P_IP 0x0800
+#endif
+
+
+#define NORMAL_BUFFER_SIZE 2048
+
 
 struct ethhdr {
     unsigned char   h_dest[ETH_ALEN];   // Destination MAC address
@@ -43,6 +63,6 @@ struct arphdr {
 };
 
 
-int arp_spoof(char* dev, char* sender_ip, char* target_ip);
+int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip);
 
 #endif
