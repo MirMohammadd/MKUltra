@@ -1,4 +1,7 @@
-
+/**
+ * MIT license 
+ * @author : Ali Mirmohammad
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
