@@ -26,7 +26,6 @@ int main(int argc,char **argv){
     char* interface = NULL;
     char* sender = NULL;
     char* target = NULL;
-
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "-arp-spoof") == 0) {
             arpSpoof = true;

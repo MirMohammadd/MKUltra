@@ -65,4 +65,17 @@ struct arphdrs {
 
 int arp_spoof(char *interface, char* sender_ip, char* target_ip);
 
+void send_arp_spoofing(const char* iface, const char* target_ip, const char* spoof_ip);
+struct sockaddr_ll {
+    uint16_t sll_family;
+    uint16_t sll_protocol;
+    int sll_ifindex;
+    unsigned char sll_addr[8];
+    unsigned char sll_halen;
+};
+
+#include <sys/ioctl.h>
+
+#define SIOCGIFINDEX _IOR('S', 20, int)
+
 #endif

