@@ -12,7 +12,7 @@
 
 #include <hosts.h>
 
-int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip){
+int arp_spoof(char *interface, char* sender_ip, char* target_ip){
     struct in_addr target_ip_hdr;
     int sock;
     struct ifreq ifr;

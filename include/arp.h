@@ -63,6 +63,6 @@ struct arphdrs {
 };
 
 
-int arp_spoof(char *interface,char* dev, char* sender_ip, char* target_ip);
+int arp_spoof(char *interface, char* sender_ip, char* target_ip);
 
 #endif
